@@ -11,6 +11,7 @@ import javax.net.ssl._
 import akka.actor._
 import akka.event.{ Logging, LoggingAdapter }
 import akka.http.impl.engine.HttpConnectionTimeoutException
+import akka.http.impl.engine.client.RedirectSupportStage.DefaultRedirectMapper
 import akka.http.impl.engine.client._
 import akka.http.impl.engine.server._
 import akka.http.impl.engine.ws.WebSocketClientBlueprint
@@ -19,7 +20,7 @@ import akka.http.impl.util.{ MapError, StreamUtils }
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.model.headers.Host
 import akka.http.scaladsl.model.ws.{ Message, WebSocketRequest, WebSocketUpgradeResponse }
-import akka.http.scaladsl.settings.{ ServerSettings, ClientConnectionSettings, ConnectionPoolSettings }
+import akka.http.scaladsl.settings.{ ClientAutoRedirectSettings, ClientConnectionSettings, ConnectionPoolSettings, ServerSettings }
 import akka.http.scaladsl.util.FastFuture
 import akka.{ Done, NotUsed }
 import akka.stream._
@@ -412,8 +413,18 @@ class HttpExt(private val config: Config)(implicit val system: ActorSystem) exte
    */
   def superPool[T](connectionContext: HttpsConnectionContext = defaultClientHttpsContext,
                    settings: ConnectionPoolSettings = defaultConnectionPoolSettings,
-                   log: LoggingAdapter = system.log)(implicit fm: Materializer): Flow[(HttpRequest, T), (Try[HttpResponse], T), NotUsed] =
-    clientFlow[T](settings) { request ⇒ request -> cachedGateway(request, settings, connectionContext, log) }
+                   log: LoggingAdapter = system.log)(implicit fm: Materializer): Flow[(HttpRequest, T), (Try[HttpResponse], T), NotUsed] = {
+    val g = GraphDSL.create(
+      clientFlow[T](settings) { request ⇒ request -> cachedGateway(request, settings, connectionContext, log) }) { implicit builder ⇒
+        originalFlow ⇒
+          import GraphDSL.Implicits._
+          val redirects = builder.add(new RedirectSupportSuperStage[T]())
+          redirects.out1 ~> originalFlow.in
+          originalFlow.out ~> redirects.in2
+          FlowShape(redirects.in1, redirects.out2)
+      }
+    Flow.fromGraph(g)
+  }
 
   /**
    * Fires a single [[akka.http.scaladsl.model.HttpRequest]] across the (cached) host connection pool for the request's

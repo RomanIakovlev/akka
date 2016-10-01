@@ -20,7 +20,7 @@ class RedirectTestSpec extends AkkaSpec {
   implicit val materializer = ActorMaterializer()
 
   "The connection-level client implementation" should {
-
+    /*
     "be able to handle redirects" in Utils.assertAllStagesStopped {
       val (_, serverHostName, serverPort) = TestUtils.temporaryServerHostnameAndPort()
       val binding = Http().bindAndHandleSync(r ⇒ {
@@ -58,7 +58,7 @@ class RedirectTestSpec extends AkkaSpec {
         .via(Http().outgoingConnection(serverHostName, serverPort))
         .runWith(Sink.head)
 
-      val thrown = the[RedirectSupportStage.InfiniteRedirectLoopException] thrownBy Await.result(x, 3.second)
+      val thrown = the[RedirectSupportStage.RedirectLoopException] thrownBy Await.result(x, 3.second)
       thrown.loop shouldEqual List(Uri("/r1"), Uri("/r2"), Uri("/r3"), Uri("/r1"))
 
       binding.futureValue.unbind().futureValue
@@ -86,12 +86,12 @@ class RedirectTestSpec extends AkkaSpec {
         })
         .runFold(0)(_ + _)
 
-      result.futureValue(PatienceConfig(1000.seconds)) shouldEqual (N + 1) * (N / 2)
+      result.futureValue(PatienceConfig(10.seconds)) shouldEqual (N + 1) * (N / 2)
 
       binding.futureValue.unbind().futureValue
-    }
+    }*/
 
-    "be able to forward selected headers to redirected requests in different origin" /*in Utils.assertAllStagesStopped */ ignore {
+    "be able to forward selected headers to redirected requests in different origin" in Utils.assertAllStagesStopped {
       val (ipAddress, serverHostName, serverPort) = TestUtils.temporaryServerHostnameAndPort()
       val binding = Http().bindAndHandleSync(r ⇒ {
         val c = r.uri.toString.reverse.takeWhile(Character.isDigit).reverse.toInt
@@ -108,18 +108,12 @@ class RedirectTestSpec extends AkkaSpec {
       val N = 100
       val result = Source.fromIterator(() ⇒ Iterator.from(1))
         .take(N)
-        .map(id ⇒ HttpRequest(uri = s"/r$id", headers = List(RawHeader("id", id.toString))))
-        .via(Http().outgoingConnection(
-          serverHostName,
-          serverPort,
-          settings =
-            ClientConnectionSettings(system)
-              .withRedirectSettings(
-                ClientAutoRedirectSettings("akka.http.client.redirect.cross-origin.allow = true"))))
-        .map(_.headers.find(_.is("etag")).map(_.value.replace("\"", "").toInt).getOrElse(0))
+        .map(id ⇒ (HttpRequest(uri = s"/r$id", headers = List(RawHeader("id", id.toString))), id))
+        .via(Http().superPool())
+        .map(_._1.get.headers.find(_.is("etag")).map(_.value.replace("\"", "").toInt).getOrElse(0))
         .runFold(0)(_ + _)
 
-      result.futureValue(PatienceConfig(100.seconds)) shouldEqual (N + 2) * (N / 4) // all even numbers till N
+      result.futureValue(PatienceConfig(10.seconds)) shouldEqual (N + 2) * (N / 4) // all even numbers till N
       binding.futureValue.unbind().futureValue
     }
   }
